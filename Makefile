@@ -8,9 +8,9 @@ PKG_CONFIG_PACKAGES = \
 	alsa \
 
 export PKG_CONFIG_CFLAGS=$(foreach pkg, $(PKG_CONFIG_PACKAGES), $(shell $(PKG_CONFIG) --cflags $(pkg)))
-# -li2c: the i2c_smbus_* helpers moved out of <linux/i2c-dev.h> into libi2c
+# : the i2c_smbus_* helpers moved out of <linux/i2c-dev.h> into libi2c
 # (modern i2c-tools); it has no pkg-config file, so append it directly.
-export PKG_CONFIG_LDFLAGS=$(foreach pkg, $(PKG_CONFIG_PACKAGES), $(shell $(PKG_CONFIG) --libs $(pkg))) -li2c
+export PKG_CONFIG_LDFLAGS=$(foreach pkg, $(PKG_CONFIG_PACKAGES), $(shell $(PKG_CONFIG) --libs $(pkg)))
 
 
 

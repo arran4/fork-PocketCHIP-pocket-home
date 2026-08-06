@@ -1,0 +1,47 @@
+# pocket-home for Debian
+
+To build a deb file for `pocket-home` targeting `armhf` on Debian Jessie, follow these instructions:
+
+Since Debian Jessie is EOL, `debootstrap` needs to point to the archive repo, and `apt` configurations need to bypass the `Valid-Until` check.
+Here is the step-by-step process using `qemu-user-static` and `debootstrap` to natively compile the deb file on an Ubuntu/Debian host using a chroot.
+
+```bash
+# 1. Install prerequisites for creating an armhf chroot
+sudo apt-get update
+sudo apt-get install -y qemu-user-static binfmt-support debootstrap schroot
+
+# 2. Bootstrap the Debian Jessie armhf environment
+sudo debootstrap --arch=armhf jessie jessie-chroot http://archive.debian.org/debian/
+
+# 3. Create a setup script to configure the chroot environment
+cat << 'CHROOT_EOF' > setup_chroot.sh
+#!/bin/bash
+dpkg --configure -a
+echo 'deb http://archive.debian.org/debian/ jessie main contrib non-free' > /etc/apt/sources.list
+echo 'Acquire::Check-Valid-Until false;' > /etc/apt/apt.conf.d/99no-check-valid-until
+apt-get update --allow-unauthenticated
+apt-get install -y --force-yes build-essential debhelper libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libfreetype6-dev libasound2-dev libi2c-dev pkg-config
+CHROOT_EOF
+
+# 4. Copy the setup script and run it inside the chroot
+sudo cp setup_chroot.sh jessie-chroot/
+sudo chroot jessie-chroot /bin/bash /setup_chroot.sh
+
+# 5. Copy the source code to the chroot
+sudo mkdir -p jessie-chroot/src
+sudo rsync -a --exclude 'jessie-chroot' . jessie-chroot/src/
+
+# 6. Create a script to run the build process
+cat << 'BUILD_EOF' > build_deb.sh
+#!/bin/bash
+cd /src
+make -j$(nproc)
+dpkg-buildpackage -us -uc -b
+BUILD_EOF
+
+sudo cp build_deb.sh jessie-chroot/
+sudo chroot jessie-chroot /bin/bash /build_deb.sh
+
+# 7. Retrieve the built deb file from the chroot
+sudo cp jessie-chroot/pocket-home_0.0.8_armhf.deb .
+```
