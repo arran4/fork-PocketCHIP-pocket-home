@@ -24,7 +24,7 @@ jobs:
           echo 'deb http://archive.debian.org/debian jessie main' > /etc/apt/sources.list && \
           echo 'deb-src http://archive.debian.org/debian jessie main' >> /etc/apt/sources.list && \
           echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/100-disable-check-valid-until && \
-          apt-get update -o Acquire::Check-Valid-Until=false || true && \
+          apt-get update -o Acquire::Check-Valid-Until=false -o Debug::Acquire::gpg=true -o Debug::pkgProblemResolver=true -o Debug::pkgDepCache::AutoInstall=true || true && \
           apt-get install -y --force-yes \
             git \
             build-essential \
