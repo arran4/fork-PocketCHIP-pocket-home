@@ -21,8 +21,8 @@ jobs:
     - name: Build for ARM on Debian Jessie
       run: |
         docker run --rm --platform linux/arm/v7 -v ${{ github.workspace }}:/workspace -w /workspace arm32v7/debian:jessie bash -c "
-          echo 'deb [check-valid-until=no] http://archive.debian.org/debian jessie main' > /etc/apt/sources.list && \
-          echo 'deb-src [check-valid-until=no] http://archive.debian.org/debian jessie main' >> /etc/apt/sources.list && \
+          echo 'deb http://archive.debian.org/debian jessie main' > /etc/apt/sources.list && \
+          echo 'deb-src http://archive.debian.org/debian jessie main' >> /etc/apt/sources.list && \
           echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/100-disable-check-valid-until && \
           apt-get update -o Acquire::Check-Valid-Until=false || true && \
           apt-get install -y --force-yes \
