@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+      with:
+        platforms: linux/arm/v7
+
+    - name: Build for ARM on Debian Jessie
+      run: |
+        docker run --rm --platform linux/arm/v7 -v ${{ github.workspace }}:/workspace -w /workspace arm32v7/debian:jessie bash -c "
+          echo 'deb http://archive.debian.org/debian/ jessie main' > /etc/apt/sources.list && \
+          echo 'deb-src http://archive.debian.org/debian/ jessie main' >> /etc/apt/sources.list && \
+          echo 'Acquire::Check-Valid-Until false;' > /etc/apt/apt.conf.d/99no-check-valid-until && \
+          apt-get update && \
+          apt-get install -y \
+            git \
+            build-essential \
+            libx11-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxft-dev \
+            libxinerama-dev \
+            libnm-glib-dev \
+            network-manager-dev \
+            libi2c-dev \
+            libasound2-dev \
+            pkg-config && \
+          make clean && \
+          make -j\$(nproc)
+        "
