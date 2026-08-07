@@ -32,8 +32,8 @@ jobs:
           cat << 'EOF' > /etc/apt/sources.list
           deb http://archive.debian.org/debian jessie main
           deb http://archive.debian.org/debian-security jessie/updates main
-          EOF
-          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until && \
+EOF
+          echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until && \
           apt-get update -o Acquire::Check-Valid-Until=false || true && \
           apt-get install -y --force-yes \
             git \
