@@ -9,14 +9,171 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag for manual release (e.g., v1.0.0)'
+      mode:
+        description: "Pipeline mode"
+        required: true
+        default: "lint-fix"
+        type: choice
+        options:
+          - lint-fix
+          - build
+          - release-major
+          - release-minor
+          - release-patch
+          - release-test
+          - release-rc
+          - release-alpha
+          - monthly-maintenance
+      release_version_override:
+        description: "Optional explicit release version (for example 2.4.0 or 2.4.0-rc.2)"
         required: false
+        default: ""
         type: string
+      allow_prs:
+        description: "Allow automation to open pull requests. Tools that fix like go fmt, go fix, etc, will use this. Also in some projects we do auto bumping of 'next version' this is for those situations too. On public projects that don't have existing failures or frequent failures, often I turn this on and off"
+        required: false
+        default: true
+        type: boolean
 
 jobs:
+  route:
+    name: Event Router
+    runs-on: ubuntu-latest
+    outputs:
+      run_code_checks: ${{ steps.decide.outputs.run_code_checks }}
+      run_build: ${{ steps.decide.outputs.run_build }}
+      run_release: ${{ steps.decide.outputs.run_release }}
+    steps:
+      - id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.action }}" == "closed" ]]; then
+            # We need to reduce the number of reruns we are getting on "closed"
+            # I am not sure following closed is even necessary
+            if [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
+              exit 0
+            fi
+            echo "run_code_checks=false" >> "$GITHUB_OUTPUT"
+            echo "run_build=false" >> "$GITHUB_OUTPUT"
+            echo "run_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "run_code_checks=true" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.ref }}" == refs/tags/* || ("${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.mode }}" != "lint-fix") ]]; then
+            echo "run_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [[ "${{ github.ref }}" == refs/tags/v* || ("${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.mode }}" == release-*) ]]; then
+            echo "run_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  prepare-release-tag:
+    name: Prepare release tag
+    needs: [route]
+    if: ${{ github.event_name == 'workflow_dispatch' && startsWith(inputs.mode, 'release-') }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      next_version: ${{ steps.tag.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup git-tag-inc
+        uses: arran4/git-tag-inc-action@v1
+        with:
+          mode: install
+      # Do not also run `go install github.com/arran4/git-tag-inc/...` in this job.
+      # Using both is redundant and has caused avoidable CI drift.
+      - id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com" # Note: you can get this ID using the GitHub API: curl -s https://api.github.com/users/github-actions%5Bbot%5D | jq .id
+          MODE="${{ inputs.mode }}"
+          OVERRIDE="${{ inputs.release_version_override }}"
+
+          if [[ -n "$OVERRIDE" ]]; then
+            # Accept "1.2.3" or "v1.2.3" override input.
+            OVERRIDE="${OVERRIDE#v}"
+            next_tag="v$OVERRIDE"
+          else
+            case "$MODE" in
+              release-major) level="major"; suffix="" ;;
+              release-minor) level="minor"; suffix="" ;;
+              release-patch) level="patch"; suffix="" ;;
+              release-test)  level="patch"; suffix="test" ;;
+              release-rc)    level="patch"; suffix="rc" ;;
+              release-alpha) level="patch"; suffix="alpha" ;;
+              *) echo "Unsupported release mode: $MODE"; exit 1 ;;
+            esac
+            if command -v git-tag-inc >/dev/null 2>&1; then
+              # git-tag-inc uses positional commands (patch/major/minor/test/rc...)
+              # and NOT flag forms like -patch.
+              level="${level#-}"
+              args=(-print-version-only "$level")
+              [[ -n "$suffix" ]] && args+=("$suffix")
+              next_tag=$(git-tag-inc "${args[@]}")
+            else
+              # Fallback implementation when git-tag-inc is not available.
+              git fetch --tags --force
+              latest=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -n 1)
+              [[ -z "$latest" ]] && latest='0.0.0'
+
+              # Prefer npx semver if available (same pattern used in g2 fixes).
+              if command -v npx >/dev/null 2>&1; then
+                case "$level" in
+                  major) bumped=$(npx --yes semver "$latest" -i major) ;;
+                  minor) bumped=$(npx --yes semver "$latest" -i minor) ;;
+                  *) bumped=$(npx --yes semver "$latest" -i patch) ;;
+                esac
+                next_tag="v${bumped}"
+              else
+                base="${latest%%-*}"
+                IFS='.' read -r maj min pat <<< "$base"
+                case "$level" in
+                  major) maj=$((maj+1)); min=0; pat=0 ;;
+                  minor) min=$((min+1)); pat=0 ;;
+                  *) pat=$((pat+1)) ;;
+                esac
+                next_tag="v${maj}.${min}.${pat}"
+              fi
+
+              if [[ -n "$suffix" ]]; then
+                next_tag="${next_tag}-${suffix}.1"
+              fi
+            fi
+          fi
+
+          # Tagging safety guards to avoid duplicate/invalid release states.
+          [[ "$next_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] || {
+            echo "Invalid tag format: $next_tag" >&2
+            exit 1
+          }
+          git fetch --tags --force
+          if git rev-parse "$next_tag" >/dev/null 2>&1; then
+            echo "Tag already exists: $next_tag" >&2
+            echo "Choose a new mode or set release_version_override." >&2
+            exit 1
+          fi
+
+          echo "release_tag=$next_tag" >> "$GITHUB_OUTPUT"
+          clean_tag="${next_tag#v}"; clean_tag="${clean_tag%%-*}"
+          IFS='.' read -r maj min pat <<< "$clean_tag"
+          echo "next_version=${maj:-0}.${min:-0}.$(( ${pat:-0} + 1 ))-SNAPSHOT" >> "$GITHUB_OUTPUT"
+
   build:
     runs-on: ubuntu-latest
+    needs: [route]
+    if: ${{ needs.route.outputs.run_build == 'true' || needs.route.outputs.run_release == 'true' || needs.route.outputs.run_code_checks == 'true' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -59,9 +216,9 @@ jobs:
         path: build/Release/pocket-home
 
   release:
-    needs: build
+    needs: [route, build, prepare-release-tag]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
+    if: ${{ !failure() && !cancelled() && needs.route.outputs.run_release == 'true' }}
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -72,6 +229,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Release ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.prepare-release-tag.outputs.release_tag || github.ref_name }}
+          name: Release ${{ needs.prepare-release-tag.outputs.release_tag || github.ref_name }}
           files: build/Release/pocket-home
