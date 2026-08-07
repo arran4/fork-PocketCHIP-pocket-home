@@ -29,10 +29,8 @@ jobs:
     - name: Build for ARM on Debian Jessie
       run: |
         docker run --rm --platform linux/arm/v7 -v ${{ github.workspace }}:/workspace -w /workspace arm32v7/debian:jessie bash -c "
-          cat << 'EOF' > /etc/apt/sources.list
-          deb http://archive.debian.org/debian jessie main
-          deb http://archive.debian.org/debian-security jessie/updates main
-EOF
+          echo 'deb http://archive.debian.org/debian jessie main' > /etc/apt/sources.list && \
+          echo 'deb http://archive.debian.org/debian-security jessie/updates main' >> /etc/apt/sources.list && \
           echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until && \
           apt-get update -o Acquire::Check-Valid-Until=false || true && \
           apt-get install -y --force-yes \
@@ -52,27 +50,10 @@ EOF
           make -j\$(nproc)
         "
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Create Release
+      if: ${{ needs.route.outputs.run_release == 'true' }}
+      uses: softprops/action-gh-release@v1
       with:
-        name: pocket-home
-        path: build/Release/pocket-home
-        if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: pocket-home
-          path: build/Release/
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Release ${{ github.event.inputs.tag || github.ref_name }}
-          files: build/Release/pocket-home
+        tag_name: ${{ needs.prepare-release-tag.outputs.release_tag || github.ref_name }}
+        name: Release ${{ needs.prepare-release-tag.outputs.release_tag || github.ref_name }}
+        files: build/Release/pocket-home
