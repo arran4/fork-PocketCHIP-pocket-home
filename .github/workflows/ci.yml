@@ -3,15 +3,23 @@ name: CI
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for manual release (e.g., v1.0.0)'
+        required: false
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v2
@@ -43,3 +51,27 @@ jobs:
           make clean && \
           make -j\$(nproc)
         "
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pocket-home
+        path: build/Release/pocket-home
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pocket-home
+          path: build/Release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Release ${{ github.event.inputs.tag || github.ref_name }}
+          files: build/Release/pocket-home
